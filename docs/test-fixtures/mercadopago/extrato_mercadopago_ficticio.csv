@@ -1,0 +1,6 @@
+Data da transação;Descrição;Valor;Tipo
+06/11/2026;Dinheiro recebido - Venda fictícia;125,90;Crédito
+06/11/2026;Pagamento de conta de teste;-42,50;Débito
+07/11/2026;Transferência recebida de Conta Teste;300,00;Crédito
+07/11/2026;Tarifa de serviço;-2,99;Débito
+08/11/2026;Devolução de compra fictícia;18,00;Crédito

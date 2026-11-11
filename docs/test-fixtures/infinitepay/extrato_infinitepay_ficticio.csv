@@ -1,0 +1,6 @@
+Data;Descrição;Tipo;Valor
+03/11/2026;Venda no débito - Pedido 1001;Crédito;R$ 150,00
+03/11/2026;Taxa da venda - Pedido 1001;Débito;R$ 3,75
+04/11/2026;Pix recebido - Cliente Teste;Crédito;R$ 80,00
+04/11/2026;Pix enviado - Fornecedor Teste;Débito;R$ 25,50
+05/11/2026;Estorno de venda - Pedido 1001;Crédito;R$ 150,00
