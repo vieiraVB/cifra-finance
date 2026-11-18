@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View,
+  ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -14,6 +14,8 @@ import { parseStatement, parseNubankAccount, parseBradescoStatement, parseNubank
 import { validateStatement } from "@/features/import/validators/transactionValidator";
 import { parseCsvStatement } from "@/features/import/extractors/csvExtractor";
 import { parseGenericOfx } from "@/features/import/statementParser";
+import { showMessage } from "@/utils/platformDialogs";
+import { Platform } from "react-native";
 import type { BankId, ParsedStatementItem } from "@/features/import/statementParser";
 
 const categoryOptions = [
@@ -178,7 +180,22 @@ export default function ImportStatementScreen() {
       }
       const format = extension === "pdf" ? "pdf" : extension === "csv" ? "csv" : "ofx";
       let text = "";
-      if (format === "pdf") {
+      if (Platform.OS === "web" && file.file) {
+        // On web, DocumentPicker exposes the selected browser File. The native
+        // FileSystem URI readers do not work for blob: URLs.
+        if (format === "pdf") {
+          const bytes = new Uint8Array(await file.file.arrayBuffer());
+          let binary = "";
+          const chunkSize = 0x8000;
+          for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+          }
+          const base64 = btoa(binary);
+          text = await extractPdfText(base64);
+        } else {
+          text = await file.file.text();
+        }
+      } else if (format === "pdf") {
         const base64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
         text = await extractPdfText(base64);
       } else {
@@ -240,7 +257,7 @@ export default function ImportStatementScreen() {
       setPhase("identify");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Não foi possível abrir o arquivo.";
-      Alert.alert("Falha ao abrir arquivo", message);
+      showMessage("Falha ao abrir arquivo", message);
     } finally {
       setBusy(false);
     }
@@ -256,7 +273,7 @@ export default function ImportStatementScreen() {
         else if (bank === "nubank_credit" && documentType === "credit_invoice") parsed = parseNubankInvoicePdf(pendingText);
         else if (bank === "nubank" && documentType === "account_statement") parsed = parseNubankAccount(pendingText);
         else if (documentType === "unknown") {
-          Alert.alert("Identificação necessária", "Escolha o tipo de documento antes de analisar este PDF.");
+          showMessage("Identificação necessária", "Escolha o tipo de documento antes de analisar este PDF.");
           return;
         } else parsed = parseStatement(pendingText, bank === "bradesco" ? "bradesco" : "nubank");
       } else if (fileFormat === "csv") {
@@ -303,7 +320,7 @@ export default function ImportStatementScreen() {
         });
       }
       if (!parsed.length) {
-        Alert.alert("Nenhuma movimentação identificada", "O arquivo foi aberto, mas nenhum lançamento foi reconhecido. Confira a instituição e o tipo de documento ou corrija a identificação.");
+        showMessage("Nenhuma movimentação identificada", "O arquivo foi aberto, mas nenhum lançamento foi reconhecido. Confira a instituição e o tipo de documento ou corrija a identificação.");
         return;
       }
       const withDuplicates: ParsedStatementItem[] = [];
@@ -337,7 +354,7 @@ export default function ImportStatementScreen() {
       setPhase("review");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Não foi possível analisar o documento.";
-      Alert.alert("Falha ao analisar arquivo", message);
+      showMessage("Falha ao analisar arquivo", message);
     } finally {
       setBusy(false);
     }
@@ -370,11 +387,11 @@ export default function ImportStatementScreen() {
       ? validateStatement(selected)
       : { valid: documentType === "credit_invoice", errors: [] as string[] };
     if (!validation.valid) {
-      Alert.alert("Revise a importação", validation.errors.join("\n"));
+      showMessage("Revise a importação", validation.errors.join("\n"));
       return;
     }
     if (!selected.length && documentType !== "credit_invoice") {
-      Alert.alert("Nada para importar", "Todas as movimentações identificadas já existem ou foram marcadas como duplicadas.");
+      showMessage("Nada para importar", "Todas as movimentações identificadas já existem ou foram marcadas como duplicadas.");
       return;
     }
     setBusy(true);
@@ -502,14 +519,14 @@ export default function ImportStatementScreen() {
           }
         }
       });
-      Alert.alert(
+      showMessage(
         "Importação concluída",
         `${selected.length} movimentação(ões) nova(s) importada(s). ${items.length - selected.length} duplicidade(s) ignorada(s). ${documentType === "credit_invoice" ? "Fatura e parcelamentos conferidos." : ""}`,
-        [{ text: "OK", onPress: () => router.back() }]
+        () => router.back()
       );
     } catch (error) {
       console.error("Statement import failed", error);
-      Alert.alert("Erro na importação", "Não foi possível salvar as movimentações. Nenhum lançamento deve ser considerado importado; tente novamente.");
+      showMessage("Erro na importação", "Não foi possível salvar as movimentações. Nenhum lançamento deve ser considerado importado; tente novamente.");
     } finally {
       setBusy(false);
     }

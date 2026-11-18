@@ -18,6 +18,8 @@ export type DashboardData = {
     category_color: string | null;
     card_name: string | null;
     operation_type: string | null;
+    received_cents?: number | null;
+    invoice_label?: string | null;
   }>;
   categories: Array<{ name: string; color: string | null; total: number }>;
 };
@@ -51,9 +53,12 @@ export function useDashboard() {
       );
       const recent = await db.getAllAsync<DashboardData["recent"][number]>(
         `SELECT t.id, t.description, t.amount_cents, t.kind, t.is_refund, t.refund_of, t.transaction_date,
-                c.name AS category_name, c.color AS category_color, cards.name AS card_name, t.operation_type
+                c.name AS category_name, c.color AS category_color, cards.name AS card_name, t.operation_type,
+                ia.received_cents, (i.institution || ' · ' || i.reference_month) AS invoice_label
          FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
          LEFT JOIN cards ON cards.id = t.card_id
+         LEFT JOIN invoice_adjustments ia ON ia.transaction_id = t.id
+         LEFT JOIN invoices i ON i.id = ia.invoice_id
          ORDER BY t.transaction_date DESC, t.created_at DESC LIMIT 5`
       );
       const categories = await db.getAllAsync<DashboardData["categories"][number]>(

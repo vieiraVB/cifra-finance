@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { router } from "expo-router";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { useSQLiteContext } from "expo-sqlite";
 import { Screen } from "@/components/Screen";
 import { colors } from "@/theme/colors";
+import { confirmAction, downloadBlob, showMessage } from "@/utils/platformDialogs";
 
 export default function SettingsScreen() {
   const db = useSQLiteContext();
@@ -16,6 +17,14 @@ export default function SettingsScreen() {
     if (exporting) return;
     setExporting(true);
     try {
+      if (Platform.OS === "web") {
+        const bytes = await db.serializeAsync();
+        const safeBuffer = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(safeBuffer).set(bytes);
+        downloadBlob(safeBuffer, `cifra-backup-${new Date().toISOString().slice(0, 10)}.db`, "application/x-sqlite3");
+        showMessage("Backup exportado", "O arquivo do banco de dados foi baixado. Guarde-o em um local seguro.");
+        return;
+      }
       await db.execAsync("PRAGMA wal_checkpoint(FULL);");
       const source = `${FileSystem.documentDirectory}SQLite/finance.db`;
       const info = await FileSystem.getInfoAsync(source);
@@ -29,20 +38,18 @@ export default function SettingsScreen() {
         UTI: "public.database",
       });
     } catch (error) {
-      Alert.alert("Falha no backup", error instanceof Error ? error.message : "Não foi possível exportar o banco.");
+      showMessage("Falha no backup", error instanceof Error ? error.message : "Não foi possível exportar o banco.");
     } finally {
       setExporting(false);
     }
   }
 
   function confirmReset() {
-    Alert.alert(
+    confirmAction(
       "Zerar banco para testes?",
       "Isso apagará contas, movimentações, importações, cartões, faturas e empréstimos deste aplicativo. As categorias padrão serão mantidas. Exporte um backup antes se quiser guardar os dados.",
-      [
-        { text: "Cancelar", style: "cancel" },
-        { text: "Zerar banco", style: "destructive", onPress: () => void resetDatabase() },
-      ]
+      "Zerar banco",
+      resetDatabase,
     );
   }
 
@@ -64,9 +71,9 @@ export default function SettingsScreen() {
           DELETE FROM settings;
         `);
       });
-      Alert.alert("Banco zerado", "O banco está pronto para os novos testes. As categorias padrão foram preservadas.");
+      showMessage("Banco zerado", "O banco está pronto para os novos testes. As categorias padrão foram preservadas.");
     } catch (error) {
-      Alert.alert("Falha ao zerar", error instanceof Error ? error.message : "Não foi possível limpar o banco.");
+      showMessage("Falha ao zerar", error instanceof Error ? error.message : "Não foi possível limpar o banco.");
     } finally {
       setResetting(false);
     }

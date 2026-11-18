@@ -41,7 +41,7 @@ export default function InvoicesScreen() {
   const load = useCallback(async () => {
     const invoiceRows = await db.getAllAsync<Invoice>(
       `SELECT i.id, i.institution, i.reference_month, i.closing_date, i.due_date,
-              i.total_cents, i.status,
+              i.total_cents + COALESCE((SELECT SUM(a.amount_cents) FROM invoice_adjustments a WHERE a.invoice_id = i.id), 0) AS total_cents, i.status,
               COALESCE((SELECT SUM(p.amount_cents) FROM invoice_payments p WHERE p.invoice_id = i.id), 0) AS paid_cents
        FROM invoices i ORDER BY COALESCE(i.due_date, i.reference_month) DESC, i.institution`
     );
@@ -79,7 +79,7 @@ export default function InvoicesScreen() {
 
   async function refreshInvoiceStatus(invoiceId: string) {
     const row = await db.getFirstAsync<{ total_cents: number; status: string; paid_cents: number }>(
-      `SELECT i.total_cents, i.status,
+      `SELECT i.total_cents + COALESCE((SELECT SUM(a.amount_cents) FROM invoice_adjustments a WHERE a.invoice_id = i.id), 0) AS total_cents, i.status,
               COALESCE((SELECT SUM(amount_cents) FROM invoice_payments WHERE invoice_id = i.id), 0) AS paid_cents
        FROM invoices i WHERE i.id = ?`, invoiceId
     );

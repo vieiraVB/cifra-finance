@@ -17,6 +17,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { colors } from "@/theme/colors";
 import { parseBRLToCents, todayISO } from "@/utils/money";
 
+type InvoiceOption = { id: string; institution: string; reference_month: string; due_date: string | null; total_cents: number; extra_cents: number };
+
 type Category = {
   id: string;
   name: string;
@@ -36,6 +38,12 @@ export default function NewTransactionScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [entryMode, setEntryMode] = useState<"standard" | "credit_operation">("standard");
+  const [creditOperationType, setCreditOperationType] = useState<"pix_credit" | "limit_to_account">("pix_credit");
+  const [receivedAmount, setReceivedAmount] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
+  const [invoiceId, setInvoiceId] = useState("");
+  const [invoices, setInvoices] = useState<InvoiceOption[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -45,7 +53,14 @@ export default function NewTransactionScreen() {
         const result = await db.getAllAsync<Category>(
           "SELECT id, name, kind, color FROM categories ORDER BY name"
         );
+        const invoiceRows = await db.getAllAsync<InvoiceOption>(
+          `SELECT i.id, i.institution, i.reference_month, i.due_date, i.total_cents,
+                  COALESCE((SELECT SUM(a.amount_cents) FROM invoice_adjustments a WHERE a.invoice_id = i.id), 0) AS extra_cents
+           FROM invoices i ORDER BY COALESCE(i.due_date, i.reference_month) DESC, i.institution`
+        );
         if (mounted) {
+          setInvoices(invoiceRows);
+          setInvoiceId(invoiceRows[0]?.id ?? "");
           setCategories(result);
           const firstExpense = result.find((item) => item.kind === "expense");
           if (firstExpense) setCategoryId(firstExpense.id);
@@ -81,8 +96,9 @@ export default function NewTransactionScreen() {
           amount_cents: number;
           transaction_date: string;
           category_id: string | null;
+          operation_type: string | null;
         }>(
-          `SELECT id, kind, description, amount_cents, transaction_date, category_id
+          `SELECT id, kind, description, amount_cents, transaction_date, category_id, operation_type
            FROM transactions WHERE id = ?`,
           transactionId ?? ""
         );
@@ -90,6 +106,12 @@ export default function NewTransactionScreen() {
         if (!mounted) return;
         if (!transaction) {
           Alert.alert("Movimentação não encontrada", "Este registro pode ter sido excluído.");
+          router.back();
+          return;
+        }
+
+        if (transaction.operation_type === "pix_credit" || transaction.operation_type === "limit_to_account") {
+          Alert.alert("Edição indisponível", "Para não desalinhar o valor da fatura, exclua este lançamento e cadastre novamente com os valores corretos.");
           router.back();
           return;
         }
@@ -134,18 +156,57 @@ export default function NewTransactionScreen() {
     const cents = parseBRLToCents(amount);
     const parsedDate = new Date(`${date}T12:00:00`);
 
-    if (!cleanDescription) {
+    if (!cleanDescription && entryMode === "standard") {
       Alert.alert("Falta a descrição", "Informe o que você pagou ou recebeu.");
       return;
     }
 
-    if (cents === null) {
+    if (entryMode === "standard" && (cents === null || cents <= 0)) {
       Alert.alert("Valor inválido", "Digite um valor maior que zero. Exemplo: 125,90.");
       return;
     }
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime())) {
       Alert.alert("Data inválida", "Use o formato AAAA-MM-DD. Exemplo: 2026-11-09.");
+      return;
+    }
+
+    if (entryMode === "credit_operation" && isEditing) {
+      Alert.alert("Edição indisponível", "Exclua e cadastre novamente para alterar uma operação vinculada à fatura.");
+      return;
+    }
+
+    if (entryMode === "credit_operation") {
+      const receivedCents = parseBRLToCents(receivedAmount);
+      const repaymentCents = parseBRLToCents(invoiceAmount);
+      if (receivedCents === null || receivedCents <= 0) { Alert.alert("Valor recebido inválido", "Informe quanto entrou na sua conta."); return; }
+      if (repaymentCents === null || repaymentCents <= 0) { Alert.alert("Valor da fatura inválido", "Informe quanto será cobrado na fatura."); return; }
+      if (!invoiceId || !invoices.some((item) => item.id === invoiceId)) { Alert.alert("Fatura necessária", "Cadastre ou importe uma fatura antes de lançar esta operação."); return; }
+      if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date) || Number.isNaN(parsedDate.getTime())) { Alert.alert("Data inválida", "Use uma data válida no formato AAAA-MM-DD."); return; }
+      setSaving(true);
+      try {
+        const now = new Date().toISOString();
+        const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const adjustmentId = `adj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const operationLabel = creditOperationType === "pix_credit" ? "Pix no crédito" : "Limite convertido em saldo";
+        const operationDescription = cleanDescription || operationLabel;
+        await db.withTransactionAsync(async () => {
+          await db.runAsync(
+            `INSERT INTO transactions (id, account_id, category_id, kind, description, amount_cents, transaction_date, notes, created_at, updated_at, is_refund, operation_type)
+             VALUES (?, NULL, NULL, 'card_purchase', ?, ?, ?, ?, ?, ?, 0, ?)`,
+            txId, cleanDescription || operationLabel, repaymentCents, date, `Valor recebido: R$ ${(receivedCents / 100).toFixed(2)}`, now, now, creditOperationType
+          );
+          await db.runAsync(
+            `INSERT INTO invoice_adjustments (id, invoice_id, transaction_id, operation_type, received_cents, amount_cents, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            adjustmentId, invoiceId, txId, creditOperationType, receivedCents, repaymentCents, now
+          );
+        });
+        router.back();
+      } catch (error) {
+        console.error("Failed to save credit operation:", error);
+        Alert.alert("Não foi possível salvar", error instanceof Error ? error.message : "Tente novamente.");
+      } finally { setSaving(false); }
       return;
     }
 
@@ -224,6 +285,58 @@ export default function NewTransactionScreen() {
             </View>
           </View>
 
+          {!isEditing ? (
+            <View style={styles.modeSwitch}>
+              <Pressable style={[styles.modeButton, entryMode === "standard" && styles.modeButtonActive]} onPress={() => setEntryMode("standard")}>
+                <Text style={[styles.modeText, entryMode === "standard" && styles.modeTextActive]}>Comum</Text>
+              </Pressable>
+              <Pressable style={[styles.modeButton, entryMode === "credit_operation" && styles.modeButtonActive]} onPress={() => setEntryMode("credit_operation")}>
+                <Text style={[styles.modeText, entryMode === "credit_operation" && styles.modeTextActive]}>Pix no crédito / Limite</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {entryMode === "credit_operation" && !isEditing ? (
+            <>
+              <Text style={styles.label}>TIPO DE OPERAÇÃO</Text>
+              <View style={styles.segment}>
+                <Pressable style={[styles.segmentButton, creditOperationType === "pix_credit" && styles.expenseActive]} onPress={() => setCreditOperationType("pix_credit")}>
+                  <Text style={[styles.segmentText, creditOperationType === "pix_credit" && styles.segmentSelected]}>Pix no crédito</Text>
+                </Pressable>
+                <Pressable style={[styles.segmentButton, creditOperationType === "limit_to_account" && styles.expenseActive]} onPress={() => setCreditOperationType("limit_to_account")}>
+                  <Text style={[styles.segmentText, creditOperationType === "limit_to_account" && styles.segmentSelected]}>Limite em conta</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.label}>QUANTO ENTROU NA CONTA</Text>
+              <View style={styles.amountContainer}><Text style={styles.currency}>R$</Text><TextInput value={receivedAmount} onChangeText={setReceivedAmount} placeholder="0,00" placeholderTextColor={colors.muted} keyboardType="decimal-pad" style={styles.amountInput} /></View>
+              <Text style={styles.label}>QUANTO SERÁ COBRADO NA FATURA</Text>
+              <View style={styles.amountContainer}><Text style={styles.currency}>R$</Text><TextInput value={invoiceAmount} onChangeText={setInvoiceAmount} placeholder="0,00" placeholderTextColor={colors.muted} keyboardType="decimal-pad" style={styles.amountInput} /></View>
+              <Text style={styles.helper}>Informe o valor final que você terá que pagar. Ele será acrescentado à fatura escolhida, sem descontar o saldo da sua conta novamente.</Text>
+              <Text style={styles.label}>FATURA QUE VAI RECEBER O LANÇAMENTO</Text>
+              {invoices.length === 0 ? <Text style={styles.helper}>Nenhuma fatura cadastrada. Importe a fatura do cartão antes de registrar esta operação.</Text> : <View style={styles.categories}>{invoices.map((invoice) => {
+                const selected = invoiceId === invoice.id;
+                const [year, month] = invoice.reference_month.split("-").map(Number);
+                const monthLabel = new Date(year, month - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+                return <Pressable key={invoice.id} onPress={() => setInvoiceId(invoice.id)} style={[styles.category, selected && styles.categorySelected]}>
+                  <View style={[styles.dot, { backgroundColor: selected ? colors.primary : colors.muted }]} />
+                  <Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>{invoice.institution} · {monthLabel}</Text>
+                  {selected ? <Text style={styles.check}>✓</Text> : null}
+                </Pressable>;
+              })}</View>}
+              {invoices.find((item) => item.id === invoiceId) ? (() => {
+                const selectedInvoice = invoices.find((item) => item.id === invoiceId)!;
+                const extra = parseBRLToCents(invoiceAmount) ?? 0;
+                const [year, month] = selectedInvoice.reference_month.split("-").map(Number);
+                const monthLabel = new Date(year, month - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+                return <Text style={styles.helper}>Total atual: {((selectedInvoice.total_cents + selectedInvoice.extra_cents) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} · Após este lançamento: {((selectedInvoice.total_cents + selectedInvoice.extra_cents + extra) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ({monthLabel})</Text>;
+              })() : null}
+              <Text style={styles.label}>DESCRIÇÃO</Text>
+              <TextInput value={description} onChangeText={setDescription} placeholder={creditOperationType === "pix_credit" ? "Ex.: Pix no crédito" : "Ex.: Limite convertido em saldo"} placeholderTextColor={colors.muted} style={styles.input} maxLength={100} />
+              <Text style={styles.label}>DATA DA OPERAÇÃO</Text>
+              <TextInput value={date} onChangeText={setDate} placeholder="AAAA-MM-DD" placeholderTextColor={colors.muted} style={styles.input} keyboardType="numbers-and-punctuation" maxLength={10} />
+            </>
+          ) : (
+          <>
           <View style={styles.segment}>
             <Pressable
               style={[styles.segmentButton, kind === "expense" && styles.expenseActive]}
@@ -313,15 +426,18 @@ export default function NewTransactionScreen() {
             </View>
           )}
 
+          </>
+          )}
+
           <Pressable
-            disabled={saving || loadingCategories}
+            disabled={saving || loadingCategories || (entryMode === "credit_operation" && invoices.length === 0)}
             style={[styles.saveButton, (saving || loadingCategories) && styles.saveDisabled]}
             onPress={() => void save()}
           >
             {saving ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <Text style={styles.saveText}>{isEditing ? "Salvar alterações" : "Salvar movimentação"}</Text>
+              <Text style={styles.saveText}>{saving ? "Salvando..." : entryMode === "credit_operation" ? "Adicionar à fatura" : isEditing ? "Salvar alterações" : "Salvar movimentação"}</Text>
             )}
           </Pressable>
 
@@ -348,6 +464,11 @@ const styles = StyleSheet.create({
   headerText: { flex: 1 },
   title: { color: colors.text, fontSize: 19, fontWeight: "800" },
   subtitle: { color: colors.muted, fontSize: 11, marginTop: 3 },
+  modeSwitch: { flexDirection: "row", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 4, borderRadius: 14, marginBottom: 18 },
+  modeButton: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 10 },
+  modeButtonActive: { backgroundColor: colors.surfaceElevated },
+  modeText: { color: colors.muted, fontSize: 11, fontWeight: "700" },
+  modeTextActive: { color: colors.primary },
   segment: { flexDirection: "row", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 4, borderRadius: 15, marginBottom: 25 },
   segmentButton: { flex: 1, alignItems: "center", paddingVertical: 13, borderRadius: 11 },
   expenseActive: { backgroundColor: "#4A202D" },

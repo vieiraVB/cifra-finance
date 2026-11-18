@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
-const DATABASE_VERSION = 9;
+const DATABASE_VERSION = 10;
 
 const defaultCategories = [
   ["cat_income_salary", "Salário", "income", "#34D399", "briefcase"],
@@ -421,6 +421,26 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase) {
       `);
     });
     await db.execAsync("PRAGMA user_version = 9;");
+  }
+
+  // Version 10: credit-to-cash operations are linked to an invoice as an additive charge.
+  // The received amount is informational; only the agreed repayment amount increases the invoice.
+  if (currentVersion < 10) {
+    await db.withTransactionAsync(async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS invoice_adjustments (
+          id TEXT PRIMARY KEY NOT NULL,
+          invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+          transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(id) ON DELETE CASCADE,
+          operation_type TEXT NOT NULL CHECK (operation_type IN ('pix_credit', 'limit_to_account')),
+          received_cents INTEGER NOT NULL CHECK (received_cents > 0),
+          amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_invoice_adjustments_invoice ON invoice_adjustments(invoice_id);
+      `);
+    });
+    await db.execAsync("PRAGMA user_version = 10;");
   }
 
   // Seed idempotently, including for databases that already had schema v1.

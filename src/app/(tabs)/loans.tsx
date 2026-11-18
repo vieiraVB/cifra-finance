@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Screen } from "@/components/Screen";
 import { colors } from "@/theme/colors";
 import { formatBRL, parseBRLToCents, todayISO } from "@/utils/money";
+import { confirmAction, showMessage } from "@/utils/platformDialogs";
 
 type Account = { id: string; name: string };
 type Loan = {
@@ -128,11 +129,11 @@ export default function LoansScreen() {
     const startedISO = parseBRDate(startedOn);
     const firstDueISO = parseBRDate(firstDue);
     if (!person.trim() || !principalCents || !agreedCents || installmentCount < 1 || installmentCount > 120 || !startedISO || !firstDueISO) {
-      Alert.alert("Confira os dados", "Informe a pessoa, os valores, a quantidade de parcelas (1 a 120) e datas válidas no formato DD/MM/AAAA.");
+      showMessage("Confira os dados", "Informe a pessoa, os valores, a quantidade de parcelas (1 a 120) e datas válidas no formato DD/MM/AAAA.");
       return;
     }
     if (agreedCents < principalCents) {
-      Alert.alert("Valor combinado inválido", "O total combinado não pode ser menor que o valor emprestado/recebido.");
+      showMessage("Valor combinado inválido", "O total combinado não pode ser menor que o valor emprestado/recebido.");
       return;
     }
     const loanId = makeId("loan");
@@ -165,9 +166,9 @@ export default function LoansScreen() {
         );
       });
       setShowCreate(false); resetCreate(); await load();
-      Alert.alert("Empréstimo cadastrado", "O cronograma de parcelas foi criado.");
+      showMessage("Empréstimo cadastrado", "O cronograma de parcelas foi criado.");
     } catch (error) {
-      Alert.alert("Não foi possível cadastrar", error instanceof Error ? error.message : "Tente novamente.");
+      showMessage("Não foi possível cadastrar", error instanceof Error ? error.message : "Tente novamente.");
     }
   }
 
@@ -181,10 +182,10 @@ export default function LoansScreen() {
                 COALESCE((SELECT SUM(p.amount_cents) FROM loan_payments p WHERE p.installment_id = i.id), 0) AS paid_cents
          FROM loan_installments i WHERE i.loan_id = ? ORDER BY i.installment_number`, loan.id);
       setInstallments(parts);
-      if (parts.length === 0) Alert.alert("Parcelas não encontradas", "Este empréstimo não possui parcelas cadastradas.");
+      if (parts.length === 0) showMessage("Parcelas não encontradas", "Este empréstimo não possui parcelas cadastradas.");
     } catch (error) {
       setShowPayment(false);
-      Alert.alert("Não foi possível abrir o pagamento", error instanceof Error ? error.message : "Erro ao carregar as parcelas.");
+      showMessage("Não foi possível abrir o pagamento", error instanceof Error ? error.message : "Erro ao carregar as parcelas.");
     }
   }
 
@@ -195,17 +196,17 @@ export default function LoansScreen() {
     const remainingTotal = Math.max(0, selected.agreed_total_cents - selected.paid_cents);
     const next = installments.find((item) => item.paid_cents < item.amount_cents);
     if (!paymentISO) {
-      Alert.alert("Data inválida", "Informe a data no formato DD/MM/AAAA.");
+      showMessage("Data inválida", "Informe a data no formato DD/MM/AAAA.");
       return;
     }
     if (!amount || amount > remainingTotal) {
-      Alert.alert("Valor inválido", `Informe um valor positivo de até ${formatBRL(remainingTotal)}.`);
+      showMessage("Valor inválido", `Informe um valor positivo de até ${formatBRL(remainingTotal)}.`);
       return;
     }
-    if (!next) { Alert.alert("Empréstimo quitado", "Não há parcelas pendentes."); return; }
+    if (!next) { showMessage("Empréstimo quitado", "Não há parcelas pendentes."); return; }
     const installmentRemaining = next.amount_cents - next.paid_cents;
     if (amount > installmentRemaining) {
-      Alert.alert("Divida o pagamento", `A próxima parcela tem ${formatBRL(installmentRemaining)} em aberto. Registre esse valor e depois continue na próxima parcela.`);
+      showMessage("Divida o pagamento", `A próxima parcela tem ${formatBRL(installmentRemaining)} em aberto. Registre esse valor e depois continue na próxima parcela.`);
       return;
     }
     const now = new Date().toISOString();
@@ -235,20 +236,18 @@ export default function LoansScreen() {
                 l.status, l.notes, l.created_at, COALESCE((SELECT SUM(p.amount_cents) FROM loan_payments p WHERE p.loan_id=l.id),0) AS paid_cents
          FROM loans l WHERE l.id = ?`, selected.id);
       if (refreshed) await openDetails(refreshed);
-      Alert.alert("Pagamento registrado", "O pagamento foi vinculado à parcela e ao histórico do empréstimo.");
+      showMessage("Pagamento registrado", "O pagamento foi vinculado à parcela e ao histórico do empréstimo.");
     } catch (error) {
-      Alert.alert("Erro ao registrar pagamento", error instanceof Error ? error.message : "Tente novamente.");
+      showMessage("Erro ao registrar pagamento", error instanceof Error ? error.message : "Tente novamente.");
     }
   }
 
   async function deleteLoan(loan: Loan) {
-    Alert.alert(
+    confirmAction(
       "Excluir empréstimo?",
       `O cadastro de ${loan.person_or_institution} e suas parcelas serão excluídos. Os lançamentos financeiros criados por este empréstimo também serão removidos. Esta ação não pode ser desfeita.`,
-      [
-        { text: "Cancelar", style: "cancel" },
-        { text: "Excluir", style: "destructive", onPress: () => {
-          void (async () => {
+      "Excluir",
+      async () => {
             try {
               await db.withTransactionAsync(async () => {
                 const linked = await db.getAllAsync<{ transaction_id: string | null }>(
@@ -267,17 +266,15 @@ export default function LoansScreen() {
               setSelected(null);
               setShowPayment(false);
               await load();
-              Alert.alert("Empréstimo excluído", "O cadastro e os lançamentos vinculados foram removidos.");
+              showMessage("Empréstimo excluído", "O cadastro e os lançamentos vinculados foram removidos.");
             } catch (error) {
-              Alert.alert("Não foi possível excluir", error instanceof Error ? error.message : "Tente novamente.");
+              showMessage("Não foi possível excluir", error instanceof Error ? error.message : "Tente novamente.");
             }
-          })();
-        }}
-      ]
+      },
     );
   }
 
-  const input = (label: string, value: string, set: (v: string) => void, placeholder: string, keyboard: "default" | "numeric" = "default") => (
+  const input = (label: string, value: string, set: (v: string) => void, placeholder: string, keyboard: "default" | "numeric" | "decimal-pad" = "default") => (
     <View style={styles.field}><Text style={styles.label}>{label}</Text><TextInput value={value} onChangeText={set} placeholder={placeholder}
       placeholderTextColor={colors.muted} keyboardType={keyboard} style={styles.input}/></View>
   );
@@ -329,8 +326,8 @@ export default function LoansScreen() {
         </View>
         {input("Pessoa ou instituição",person,setPerson,"Ex.: João Silva")}
         {input("Descrição (opcional)",description,setDescription,"Ex.: Empréstimo pessoal")}
-        {input(direction==="lent"?"Quanto você emprestou":"Quanto recebeu",principal,setPrincipal,"Ex.: 1.000,00","numeric")}
-        {input("Valor total combinado para devolução",agreed,setAgreed,"Ex.: 1.300,00","numeric")}
+        {input(direction==="lent"?"Quanto você emprestou":"Quanto recebeu",principal,setPrincipal,"Ex.: 1.000,00","decimal-pad")}
+        {input("Valor total combinado para devolução",agreed,setAgreed,"Ex.: 1.300,00","decimal-pad")}
         <Text style={styles.helper}>Não precisa informar juros. A diferença entre o valor inicial e o combinado será calculada automaticamente.</Text>
         {input("Quantidade de parcelas",count,setCount,"Ex.: 5","numeric")}
         <Text style={styles.label}>Frequência das parcelas</Text>
@@ -370,7 +367,7 @@ export default function LoansScreen() {
         <Text style={styles.modalBack} onPress={() => setShowPayment(false)}>‹  Cancelar</Text>
         <Text style={styles.title}>{selected?.direction==="lent"?"Registrar recebimento":"Registrar pagamento"}</Text>
         <Text style={styles.subtitle}>{selected?.person_or_institution}</Text>
-        {input("Valor pago/recebido",paymentAmount,setPaymentAmount,"Ex.: 260,00","numeric")}
+        {input("Valor pago/recebido",paymentAmount,setPaymentAmount,"Ex.: 260,00","decimal-pad")}
         {dateInput("Data do pagamento",paymentDate,setPaymentDate)}
         {input("Observação",paymentNotes,setPaymentNotes,"Opcional")}
         <Text style={styles.label}>Conta relacionada (opcional)</Text>

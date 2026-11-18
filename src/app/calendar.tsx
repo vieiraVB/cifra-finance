@@ -52,8 +52,8 @@ export default function CalendarScreen() {
       }
 
       const invoices = await db.getAllAsync<InvoiceRow>(
-        `SELECT i.id, i.due_date, i.total_cents,
-                MAX(0, i.total_cents - COALESCE((SELECT SUM(p.amount_cents) FROM invoice_payments p WHERE p.invoice_id = i.id), 0)) AS remaining_cents,
+        `SELECT i.id, i.due_date, i.total_cents + COALESCE((SELECT SUM(a.amount_cents) FROM invoice_adjustments a WHERE a.invoice_id = i.id), 0) AS total_cents,
+                MAX(0, i.total_cents + COALESCE((SELECT SUM(a.amount_cents) FROM invoice_adjustments a WHERE a.invoice_id = i.id), 0) - COALESCE((SELECT SUM(p.amount_cents) FROM invoice_payments p WHERE p.invoice_id = i.id), 0)) AS remaining_cents,
                 i.status, i.reference_month,
                 COALESCE(i.institution, c.institution, c.name, 'Cartão') AS institution
          FROM invoices i LEFT JOIN cards c ON c.id = i.card_id

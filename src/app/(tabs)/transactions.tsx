@@ -1,10 +1,11 @@
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSQLiteContext } from "expo-sqlite";
 import { Screen } from "@/components/Screen";
 import { colors } from "@/theme/colors";
 import { formatBRL } from "@/utils/money";
+import { confirmAction, showMessage } from "@/utils/platformDialogs";
 
 type Row = {
   id: string;
@@ -17,6 +18,8 @@ type Row = {
   category_name: string | null;
   card_name: string | null;
   operation_type?: string | null;
+  received_cents?: number | null;
+  invoice_label?: string | null;
 };
 
 export default function TransactionsScreen() {
@@ -27,13 +30,16 @@ export default function TransactionsScreen() {
   const load = useCallback(async () => {
     const result = await db.getAllAsync<Row>(
       `SELECT t.id, t.description, t.amount_cents, t.kind, t.is_refund, t.refund_of, t.transaction_date,
-              c.name AS category_name, cards.name AS card_name, t.operation_type
+              c.name AS category_name, cards.name AS card_name, t.operation_type,
+              ia.received_cents, (i.institution || ' · ' || i.reference_month) AS invoice_label
        FROM transactions t
        LEFT JOIN categories c ON c.id = t.category_id
        LEFT JOIN cards ON cards.id = t.card_id
-       WHERE (? = 'all' OR t.kind = ?)
+       LEFT JOIN invoice_adjustments ia ON ia.transaction_id = t.id
+       LEFT JOIN invoices i ON i.id = ia.invoice_id
+       WHERE (? = 'all' OR t.kind = ? OR (? = 'expense' AND t.kind = 'card_purchase'))
        ORDER BY t.transaction_date DESC, t.created_at DESC`,
-      filter, filter
+      filter, filter, filter
     );
     setRows(result);
   }, [db, filter]);
@@ -41,27 +47,19 @@ export default function TransactionsScreen() {
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   function confirmDelete(row: Row) {
-    Alert.alert(
+    confirmAction(
       "Excluir movimentação?",
       `A movimentação "${row.description}" será removida permanentemente.`,
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Excluir",
-          style: "destructive",
-          onPress: () => {
-            void (async () => {
-              try {
-                await db.runAsync("DELETE FROM transactions WHERE id = ?", row.id);
-                await load();
-              } catch (error) {
-                console.error("Failed to delete transaction:", error);
-                Alert.alert("Erro ao excluir", "Não foi possível remover esta movimentação.");
-              }
-            })();
-          },
-        },
-      ]
+      "Excluir",
+      async () => {
+        try {
+          await db.runAsync("DELETE FROM transactions WHERE id = ?", row.id);
+          await load();
+        } catch (error) {
+          console.error("Failed to delete transaction:", error);
+          showMessage("Erro ao excluir", "Não foi possível remover esta movimentação.");
+        }
+      },
     );
   }
 
@@ -116,7 +114,7 @@ export default function TransactionsScreen() {
               >
                 <Text style={styles.name}>{row.description}</Text>
                 <Text style={styles.meta}>
-                  {row.is_refund ? `Estorno · reduz ${row.refund_of === "income" ? "receitas" : "despesas"}` : row.operation_type === "pix_credit" ? "Pix no crédito" : row.category_name || "Sem categoria"} · {row.transaction_date.split("-").reverse().join("/")}{row.card_name ? ` · ${row.card_name}` : ""}
+                  {row.is_refund ? `Estorno · reduz ${row.refund_of === "income" ? "receitas" : "despesas"}` : row.operation_type === "pix_credit" ? "Pix no crédito" : row.operation_type === "limit_to_account" ? "Limite convertido em saldo" : row.category_name || "Sem categoria"} · {row.transaction_date.split("-").reverse().join("/")}{row.received_cents != null ? ` · Recebeu ${formatBRL(row.received_cents)} · Fatura ${row.invoice_label ?? ""}` : row.card_name ? ` · ${row.card_name}` : ""}
                 </Text>
                 <Text style={styles.editHint}>Toque para editar</Text>
               </Pressable>
