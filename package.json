@@ -49,7 +49,9 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "start:clear": "expo start -c"
+    "start:clear": "expo start -c",
+    "build:web": "expo export -p web",
+    "preview:web": "npx serve dist"
   },
   "private": false
 }

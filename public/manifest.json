@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "Cifra — Controle Financeiro",
+  "short_name": "Cifra",
+  "description": "Controle suas contas, movimentações, cartões, faturas e empréstimos.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0D0A16",
+  "theme_color": "#0D0A16",
+  "lang": "pt-BR",
+  "categories": [
+    "finance",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

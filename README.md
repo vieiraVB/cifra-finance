@@ -135,3 +135,41 @@ Sugestões e melhorias são bem-vindas. Antes de abrir uma alteração:
 ## Licença
 
 Distribuído sob a licença MIT. Consulte [LICENSE](LICENSE).
+
+
+## Aplicativo instalável no iPhone (PWA)
+
+O Cifra também pode ser disponibilizado como PWA (Progressive Web App), permitindo adicioná-lo à Tela de Início do iPhone sem Expo Go e sem assinatura Apple Developer.
+
+### Requisitos importantes
+
+- Hospedagem com HTTPS.
+- O servidor deve enviar `Cross-Origin-Embedder-Policy: credentialless` e `Cross-Origin-Opener-Policy: same-origin`, necessários para o SQLite no navegador.
+- O projeto inclui configuração para Netlify (`netlify.toml` e `public/_headers`).
+- O armazenamento web é separado do banco SQLite nativo do iPhone. Não há sincronização automática entre os dois.
+
+### Gerar a versão web
+
+```bash
+npm install
+npm run build:web
+```
+
+A pasta `dist/` contém a versão web exportada.
+
+### Publicar no Netlify
+
+1. Envie o repositório para o GitHub.
+2. No Netlify, importe o repositório.
+3. Use `npm run build:web` como comando de build.
+4. Use `dist` como diretório de publicação.
+5. Publique e abra o endereço HTTPS no Safari do iPhone.
+
+### Instalar no iPhone
+
+1. Abra o endereço publicado no Safari.
+2. Toque em Compartilhar.
+3. Escolha **Adicionar à Tela de Início**.
+4. Confirme o nome Cifra.
+
+> A instalação PWA não é um IPA nem um aplicativo distribuído pela App Store. É uma aplicação web instalada pela Tela de Início. Recursos que dependem de APIs nativas podem ter comportamento diferente no navegador; valide importação de arquivos, exportação/compartilhamento e impressão no iPhone antes de depender da versão PWA no dia a dia.
